@@ -1,5 +1,5 @@
-import os
 import base64
+import os
 import pandas as pd
 import streamlit as st
 
@@ -8,11 +8,13 @@ def mostrar_panel_admin(
     origen_retenciones, origen_nps, origen_ventas, objetivos, rol
 ):
   """Panel exclusivo para Administradores, Masters y Supervisores con NPS global agregado."""
-  
+
   # Obtener nombre/clave de usuario para la foto
   user_key = st.session_state.get("user", "Admin")
-  nombre_mostrar = st.session_state.get("nombre_mostrar", "Administrador / Supervisor")
-  
+  nombre_mostrar = st.session_state.get(
+      "nombre_mostrar", "Administrador / Supervisor"
+  )
+
   # Buscar foto de perfil en carpeta 'fotos/'
   foto_path = f"fotos/{user_key}.png"
   if not os.path.exists(foto_path):
@@ -40,10 +42,10 @@ def mostrar_panel_admin(
 
   # Carga de datos con persistencia (lee el archivo subido o el guardado en disco)
   df_ret = (
-      pd.read_excel(origen_retenciones)
+      pd.read_excel(origen_retenciones, sheet_name="Retes X asesor")
       if origen_retenciones
       else (
-          pd.read_excel("datos_retenciones.xlsx")
+          pd.read_excel("datos_retenciones.xlsx", sheet_name="Retes X asesor")
           if os.path.exists("datos_retenciones.xlsx")
           else pd.DataFrame()
       )
@@ -94,29 +96,33 @@ def mostrar_panel_admin(
   c1, c2, c3, c4 = st.columns(4)
   with c1:
     st.markdown(
-        f'<div class="metric-card"><div class="metric-title">% RETE CTA (Global)</div><div class="metric-value">{tot_rete*100:.1f}%</div></div>',
+        f'<div class="metric-card"><div class="metric-title">% RETE CTA'
+        f' (Global)</div><div class="metric-value">{tot_rete*100:.1f}%</div></div>',
         unsafe_allow_html=True,
     )
   with c2:
     st.markdown(
-        f'<div class="metric-card"><div class="metric-title">BENEFICIO (Global)</div><div class="metric-value">{tot_bene*100:.1f}%</div></div>',
+        f'<div class="metric-card"><div class="metric-title">BENEFICIO'
+        f' (Global)</div><div class="metric-value">{tot_bene*100:.1f}%</div></div>',
         unsafe_allow_html=True,
     )
   with c3:
     st.markdown(
-        '<div class="metric-card"><div class="metric-title">NPS Positivo</div><div class="metric-value">80.0%</div></div>',
+        '<div class="metric-card"><div class="metric-title">NPS'
+        ' Positivo</div><div class="metric-value">80.0%</div></div>',
         unsafe_allow_html=True,
     )
   with c4:
     st.markdown(
-        f'<div class="metric-card"><div class="metric-title">Ventas Grupales</div><div class="metric-value">{tot_ventas}</div></div>',
+        f'<div class="metric-card"><div class="metric-title">Ventas'
+        f' Grupales</div><div class="metric-value">{tot_ventas}</div></div>',
         unsafe_allow_html=True,
     )
 
   st.markdown("---")
   st.subheader("📋 Detalle Operativo General")
 
-  # Primera fila de tablas: Retenciones (mostrando asesores/grupos) y Ventas
+  # Primera fila de tablas: Retenciones y Ventas
   col_t1, col_t2 = st.columns(2)
   with col_t1:
     st.markdown("#### Rendimiento y Retenciones por Asesores / Grupos")
@@ -132,7 +138,7 @@ def mostrar_panel_admin(
     else:
       st.info("Sin datos de ventas cargados.")
 
-  # Segunda fila: Detalle de NPS agregado abajo de todo tal como se solicitó
+  # Segunda fila: Detalle de NPS agregado abajo
   st.markdown("<br>", unsafe_allow_html=True)
   st.markdown("#### Detalle General de NPS")
   if not df_nps.empty:
@@ -149,7 +155,7 @@ def mostrar_panel_asesor(
     origen_ventas,
     objetivos,
 ):
-  """Panel exclusivo para Asesores con persistencia y lectura precisa."""
+  """Panel exclusivo para Asesores con persistencia y filtrado inteligente."""
 
   # Buscar foto de perfil en carpeta 'fotos/' con el nombre de usuario
   user_key = st.session_state.get("user", "")
@@ -177,12 +183,12 @@ def mostrar_panel_asesor(
       unsafe_allow_html=True,
   )
 
-  # Carga de planillas persistidas en disco para el asesor
+  # Carga de planillas persistidas en disco para el asesor (apuntando a la hoja correcta)
   df_ret = (
-      pd.read_excel(origen_retenciones)
+      pd.read_excel(origen_retenciones, sheet_name="Retes X asesor")
       if origen_retenciones
       else (
-          pd.read_excel("datos_retenciones.xlsx")
+          pd.read_excel("datos_retenciones.xlsx", sheet_name="Retes X asesor")
           if os.path.exists("datos_retenciones.xlsx")
           else pd.DataFrame()
       )
@@ -209,23 +215,53 @@ def mostrar_panel_asesor(
   meta_rete = objetivos.get("rete_pct", 0.70)
   meta_bene = objetivos.get("beneficio_pct", 0.40)
 
-  # --- FUNCIÓN DE FILTRADO DIRECTO Y ROBUSTO ---
+  # --- FUNCIÓN DE FILTRADO INTELIGENTE Y ROBUSTO ---
   def filtrar_dataframe(df):
     if df.empty:
       return df
-    col_nombre = df.columns[0]
-    texto_a_buscar = asesor_objetivo if asesor_objetivo else nombre_mostrar
 
-    # Buscar coincidencia flexible ignorando mayúsculas/minúsculas y espacios extras
-    condicion = (
-        df[col_nombre]
-        .astype(str)
-        .str.lower()
-        .str.strip()
-        .str.contains(str(texto_a_buscar).lower().strip(), na=False)
-    )
-    resultado = df[condicion]
-    return resultado
+    texto_a_buscar = str(asesor_objetivo if asesor_objetivo else nombre_mostrar)
+    palabras_clave = [
+        p.strip()
+        for p in texto_a_buscar.lower().replace(",", "").split()
+        if len(p) > 2
+    ]
+
+    if not palabras_clave:
+      palabras_clave = [texto_a_buscar.lower().strip()]
+
+    col_objetivo = None
+    for col in df.columns:
+      col_str = str(col).lower()
+      if any(
+          k in col_str
+          for k in [
+              "asesor",
+              "agente",
+              "nombre",
+              "ejecutivo",
+              "usuario",
+              "personal",
+          ]
+      ):
+        col_objetivo = col
+        break
+
+    if col_objetivo is None:
+      for col in df.columns:
+        if df[col].dtype == object:
+          col_objetivo = col
+          break
+
+    if col_objetivo is None:
+      col_objetivo = df.columns[0]
+
+    def match_fila(val):
+      val_str = str(val).lower()
+      return all(palabra in val_str for palabra in palabras_clave)
+
+    condicion = df[col_objetivo].apply(match_fila)
+    return df[condicion]
 
   # Filtrar datos de retenciones
   mi_rete_val = 0.0
@@ -262,10 +298,8 @@ def mostrar_panel_asesor(
     col_vv = df_ventas.columns[-1]
     if not filtro_v.empty:
       df_mi_ventas = filtro_v
-      mi_venta_val = (
-          int(
-              pd.to_numeric(filtro_v[col_vv].values[0], errors="coerce") or 0
-          )
+      mi_venta_val = int(
+          pd.to_numeric(filtro_v[col_vv].values[0], errors="coerce") or 0
       )
 
   # Filtrar NPS del asesor
