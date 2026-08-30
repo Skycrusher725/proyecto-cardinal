@@ -3,6 +3,8 @@ import pandas as pd
 import time
 import os
 import io
+import calendar
+from datetime import datetime
 
 # Configuración inicial de la página (ancho completo optimizado para pantallas de control)
 st.set_page_config(
@@ -68,7 +70,7 @@ st.markdown("""
         padding: 15px;
         border-radius: 12px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        margin-bottom: 10px;
+        margin-bottom: 20px;
     }
     
     .panel-title {
@@ -110,6 +112,9 @@ if "file_ven_bytes" not in st.session_state:
 if "file_nps_bytes" not in st.session_state:
     st.session_state["file_nps_bytes"] = None
 
+if "file_asistencias_bytes" not in st.session_state:
+    st.session_state["file_asistencias_bytes"] = None
+
 # ==========================================
 # ENCABEZADO PRINCIPAL
 # ==========================================
@@ -139,6 +144,10 @@ with st.sidebar:
     if file_nps_sub is not None:
         st.session_state["file_nps_bytes"] = file_nps_sub.getvalue()
 
+    file_asis_sub = st.file_uploader("Subir Asistencias (.xlsx)", type=["xlsx"], key="up_asis")
+    if file_asis_sub is not None:
+        st.session_state["file_asistencias_bytes"] = file_asis_sub.getvalue()
+
 # Función auxiliar para renderizar tarjetas de métricas compactas
 def render_metric_html(label, value, delta=None):
     delta_html = f"<span style='color: #3fb950; font-size: 11px; font-weight: bold;'>{delta}</span>" if delta else ""
@@ -156,7 +165,7 @@ def render_metric_html(label, value, delta=None):
 col_ret, col_ventas, col_nps = st.columns(3)
 
 # -------------------------------------------------------------------------
-# 1. MÓDULO DE RETENCIONES (CON FORMATO DE PORCENTAJE + CARRUSEL CADA 5s)
+# 1. MÓDULO DE RETENCIONES
 # -------------------------------------------------------------------------
 with col_ret:
     st.markdown('<div class="panel-box carousel-animated">', unsafe_allow_html=True)
@@ -188,7 +197,6 @@ with col_ret:
                 df_activo = df_retes_grupo.copy()
                 tag_carrusel = "🔄 [2/2: Grupo]"
                 
-            # Formatear columnas decimales a porcentaje visual (ej: 0.8077 -> 80.8%)
             for col in df_activo.columns:
                 if '%' in col or any(k in col.lower() for k in ['rete', 'beneficio', 'pct', 'porcentaje']):
                     df_activo[col] = df_activo[col].apply(
@@ -307,6 +315,122 @@ with col_nps:
             st.error(f"Revisa la pestaña 'NPS X asesor'. Detalle: {e}")
         
     st.markdown('</div>', unsafe_allow_html=True)
+
+
+# =========================================================================
+# MÓDULO: CALENDARIO DE ASISTENCIA PERSONAL (VISTA ASESOR)
+# =========================================================================
+st.markdown('<div class="panel-box">', unsafe_allow_html=True)
+st.markdown('<div class="panel-title">📅 Mi Historial de Asistencia Mensual</div>', unsafe_allow_html=True)
+
+col_asesor_sel, col_mes_sel = st.columns([2, 2])
+
+with col_asesor_sel:
+    nombre_asesor = st.text_input("👤 Tu Nombre / Usuario de Asesor:", value="Erika Aguirre", placeholder="Ingresa tu nombre...", key="input_nombre_asesor")
+
+with col_mes_sel:
+    meses_nombres = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    }
+    mes_actual_num = datetime.now().month
+    anio_actual = datetime.now().year
+    
+    mes_elegido_nombre = st.selectbox("📆 Seleccionar Mes:", list(meses_nombres.values()), index=mes_actual_num - 1, key="select_mes_calendario")
+    mes_elegido_num = [k for k, v in meses_nombres.items() if v == mes_elegido_nombre][0]
+
+origen_asis = None
+if st.session_state["file_asistencias_bytes"] is not None:
+    origen_asis = io.BytesIO(st.session_state["file_asistencias_bytes"])
+elif os.path.exists("datos_asistencias.xlsx"):
+    origen_asis = "datos_asistencias.xlsx"
+
+if origen_asis is None:
+    st.info("⚠️ Aún no se cargó el archivo 'datos_asistencias.xlsx'. Súbelo desde el panel lateral para ver tu calendario.")
+else:
+    try:
+        df_asistencias = pd.read_excel(origen_asis)
+        
+        col_fecha = next((c for c in df_asistencias.columns if 'fecha' in c.lower()), None)
+        col_asesor = next((c for c in df_asistencias.columns if any(k in c.lower() for k in ['asesor', 'agente', 'nombre', 'usuario'])), None)
+        col_estado = next((c for c in df_asistencias.columns if any(k in c.lower() for k in ['estado', 'asistencia', 'tipo'])), None)
+        col_motivo = next((c for c in df_asistencias.columns if any(k in c.lower() for k in ['motivo', 'observacion', 'comentario', 'detalle'])), None)
+        
+        if not col_fecha or not col_asesor:
+            st.warning("⚠️ El archivo de asistencias no tiene las columnas reconocibles ('Fecha', 'Asesor').")
+        else:
+            df_asistencias[col_fecha] = pd.to_datetime(df_asistencias[col_fecha], errors='coerce')
+            
+            mask_asesor = df_asistencias[col_asesor].astype(str).str.contains(nombre_asesor, case=False, na=False)
+            mask_mes = (df_asistencias[col_fecha].dt.month == mes_elegido_num) & (df_asistencias[col_fecha].dt.year == anio_actual)
+            
+            df_mi_mes = df_asistencias[mask_asesor & mask_mes].copy()
+            
+            registro_dias = {}
+            for _, row in df_mi_mes.iterrows():
+                f_obj = row[col_fecha]
+                if pd.notnull(f_obj):
+                    dia_num = f_obj.day
+                    estado = str(row[col_estado]).strip().lower() if col_estado and pd.notnull(row[col_estado]) else "presente"
+                    motivo = str(row[col_motivo]).strip() if col_motivo and pd.notnull(row[col_motivo]) else ""
+                    registro_dias[dia_num] = {"estado": estado, "motivo": motivo}
+
+            st.markdown("""
+                <div style="display: flex; gap: 15px; margin-bottom: 15px; font-size: 12px; align-items: center;">
+                    <span><b>Referencias:</b></span>
+                    <span style="background: #238636; padding: 3px 8px; border-radius: 4px; color: white;">🟢 Presente</span>
+                    <span style="background: #da3633; padding: 3px 8px; border-radius: 4px; color: white;">🔴 Ausente</span>
+                    <span style="background: #9e6a03; padding: 3px 8px; border-radius: 4px; color: white;">🟡 Novedad / Observación</span>
+                </div>
+            """, unsafe_allow_html=True)
+
+            cal = calendar.monthcalendar(anio_actual, mes_elegido_num)
+            dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+            
+            cols_sem = st.columns(7)
+            for i, d_sem in enumerate(dias_semana):
+                cols_sem[i].markdown(f"<div style='text-align: center; font-weight: bold; color: #8b949e; font-size: 12px;'>{d_sem}</div>", unsafe_allow_html=True)
+
+            for semana in cal:
+                cols_dias = st.columns(7)
+                for i, dia_num in enumerate(semana):
+                    with cols_dias[i]:
+                        if dia_num == 0:
+                            st.markdown("<div style='padding: 10px;'></div>", unsafe_allow_html=True)
+                        else:
+                            info_dia = registro_dias.get(dia_num, None)
+                            bg_color, border_col, emoji_estado = "#21262d", "#30363d", ""
+                            
+                            if info_dia:
+                                est, mot = info_dia["estado"], info_dia["motivo"]
+                                if any(k in est for k in ['ausente', 'falta', 'injustificado']):
+                                    bg_color, border_col, emoji_estado = "#5a1d1d", "#da3633", "🔴"
+                                elif mot and len(mot) > 2:
+                                    bg_color, border_col, emoji_estado = "#4d3800", "#bb8009", "🟡"
+                                else:
+                                    bg_color, border_col, emoji_estado = "#113822", "#238636", "🟢"
+
+                            st.markdown(f"""
+                                <div style="background-color: {bg_color}; border: 1px solid {border_col}; border-radius: 6px; padding: 8px; text-align: center; min-height: 50px; margin-bottom: 5px;">
+                                    <div style="font-size: 14px; font-weight: bold; color: #f0f6fc;">{dia_num}</div>
+                                    <div style="font-size: 11px; margin-top: 2px;">{emoji_estado}</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            max_dias = calendar.monthrange(anio_actual, mes_elegido_num)[1]
+            dia_seleccionado = st.selectbox("🔍 Selecciona un día del mes para ver el detalle de la supervisora:", [d for d in range(1, max_dias + 1)], key="sel_dia_asis")
+            
+            if dia_seleccionado in registro_dias:
+                detalle = registro_dias[dia_seleccionado]
+                st.info(f"📝 **Detalle para el día {dia_seleccionado} de {mes_elegido_nombre}:**\n\n- **Estado registrado:** {detalle['estado'].capitalize()}\n- **Observación de la supervisora:** {detalle['motivo'] if detalle['motivo'] else 'Sin observaciones adicionales.'}")
+            else:
+                st.success(f"✅ Día {dia_seleccionado} de {mes_elegido_nombre}: Sin registros particulares cargados o figurás presente con normalidad.")
+
+    except Exception as e:
+        st.error(f"⚠️ Error al procesar el archivo de asistencias para el calendario. Detalle: {e}")
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # CONTROL DEL CICLO DEL CARRUSEL (5 SEGUNDOS)
