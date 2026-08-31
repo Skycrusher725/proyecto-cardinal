@@ -69,12 +69,12 @@ def mostrar_gestion_asistencias():
 
   # Intentar obtener la lista de asesores desde las planillas ya cargadas
   asesores_lista = []
-  for arch in ["datos_retenciones.xlsx", "datos_ventas.xlsx"]:
+  for arch in ["usuarios.xlsx"]:
     if os.path.exists(arch):
       try:
         temp_df = pd.read_excel(arch)
         if not temp_df.empty:
-          col_nombres = temp_df.columns[0]
+          col_nombres = temp_df.columns[1]
           nombres = temp_df[col_nombres].dropna().astype(str).tolist()
           asesores_lista.extend(nombres)
       except Exception:
